@@ -237,6 +237,8 @@ const CLOSED_MSG = {
   AFTER_LAST_ORDER: (l) => `วันนี้ร้านปิดรับออเดอร์แล้วจ้า (รับออเดอร์ถึง ${l} น.) รบกวนสั่งอาหารในวันถัดไปค่ะ ขอโทษคุณลูกค้าด้วยจ้า`
 };
 
+const NOT_IN_APP_MSG = "สั่งอาหารได้จากแอป LINE บนมือถือเท่านั้น รบกวนเปิดแชทร้านในมือถือ แล้วกดปุ่ม \"สั่งอาหาร\" ที่เมนูด้านล่างน้า (หน้านี้ดูเมนูและราคาได้ แต่ยังส่งออเดอร์ไม่ได้)";
+const MENU_FAIL_MSG = "โหลดเมนูล่าสุดไม่สำเร็จ รบกวนปิดหน้านี้แล้วเปิดใหม่อีกครั้ง หรือโทรหาร้านน้า";
 const WRONG_CHAT_MSG = "หน้านี้สั่งได้เฉพาะเมื่อเปิดจากปุ่ม \"สั่งอาหาร\" ในแชทของร้านเท่านั้น รบกวนเปิดแชทร้านแล้วกดปุ่มที่เมนูด้านล่างน้า";
 const $ = id => document.getElementById(id);
 const store = {
@@ -301,8 +303,10 @@ function render() {
   pill.className = "pill " + (S.open ? "open" : "closed");
   pill.textContent = S.open ? `เปิดรับออเดอร์ถึง ${st.closeAt} น.` : "ตอนนี้ปิดรับออเดอร์";
   const n = $("closedNotice");
-  n.hidden = S.open && !S.wrongChat;
-  if (S.wrongChat) n.innerHTML = `<b>เปิดผิดแชท</b> ${esc(WRONG_CHAT_MSG)}`;
+  n.hidden = S.open && !S.wrongChat && !S.notInApp && !S.menuFail;
+  if (S.menuFail) n.innerHTML = `<b>โหลดเมนูไม่สำเร็จ</b> ${esc(MENU_FAIL_MSG)}`;
+  else if (S.notInApp) n.innerHTML = `<b>เปิดจากแอป LINE บนมือถือ</b> ${esc(NOT_IN_APP_MSG)}`;
+  else if (S.wrongChat) n.innerHTML = `<b>เปิดผิดแชท</b> ${esc(WRONG_CHAT_MSG)}`;
   else if (!S.open) n.innerHTML = `<b>ปิดรับออเดอร์</b> ${esc(st.msg)}` + (S.demo ? "<br><span class='hint'>โหมดตัวอย่างยังกดลองสั่งได้</span>" : "");
   if (!S.pickupSet) { $("pickupLabel").hidden = S.shop.pickup === "0"; S.pickupSet = true; }
 
@@ -429,6 +433,8 @@ $("sendBtn").onclick = async () => {
     : !msg.name ? "กรุณาใส่ชื่อผู้รับ"
     : !/^0\d{8,9}$/.test(msg.phone) ? "เบอร์โทรควรเป็นตัวเลข 9-10 หลัก ขึ้นต้นด้วย 0"
     : (!S.open && !S.demo) ? shopStatus().msg
+    : S.menuFail ? MENU_FAIL_MSG
+    : S.notInApp ? NOT_IN_APP_MSG
     : S.wrongChat ? WRONG_CHAT_MSG : "";
   err.hidden = !problem; err.textContent = problem; if (problem) return;
   store.set("aroi_customer", { name: msg.name, phone: msg.phone, method: msg.method });
@@ -452,11 +458,15 @@ async function start() {
     try { const r = await fetch(CONFIG.MENU_CSV_URL + (CONFIG.MENU_CSV_URL.includes("?") ? "&" : "?") + "t=" + Date.now()); if (r.ok) rows = parseCSV(await r.text()).slice(1); } catch (e) {}
   }
   load(rows || DEMO_ROWS);
+  if (CONFIG.LIFF_ID) {
+    // ระบบจริง: ไม่ใช้โหมดตัวอย่าง ถ้าไม่ได้เปิดในแอป LINE บนมือถือ ให้ดูเมนูได้แต่ส่งออเดอร์ไม่ได้
+    S.demo = false; S.notInApp = true;
+  }
   if (CONFIG.LIFF_ID && typeof liff !== "undefined") {
     try {
       await liff.init({ liffId: CONFIG.LIFF_ID });
       if (liff.isInClient()) {
-        S.demo = false;
+        S.demo = false; S.notInApp = false;
         const ctx = liff.getContext() || {};
         if (ctx.type === "utou") S.liffReady = true;
         else S.wrongChat = true;
@@ -464,7 +474,8 @@ async function start() {
       }
     } catch (e) {}
   }
-  if (!rows && CONFIG.MENU_CSV_URL) S.demo = true;
+  if (!rows && CONFIG.MENU_CSV_URL && !CONFIG.LIFF_ID) S.demo = true;
+  if (!rows && CONFIG.LIFF_ID) S.menuFail = true; // ระบบจริงห้ามใช้เมนูตัวอย่างรับออเดอร์
   const params = new URLSearchParams(location.search);
   const saved = params.has("edit") ? store.get("aroi_last_cart") : store.get("aroi_cart");
   if (Array.isArray(saved)) {
